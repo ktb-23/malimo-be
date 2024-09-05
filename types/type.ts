@@ -10,3 +10,9 @@ export interface LoginResponseType {
   accessToken: string;
   refreshToken: string;
 }
+export interface SaveDiaryType {
+  user_id: number;
+  date_id: number;
+  date: string;
+  contents: string;
+}

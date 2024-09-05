@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { generateToken, generateRefreshToken } from "../authorization/jwt";
 import { LoginResponseType, UserType } from "../types/type";
 
+// 회원 서비스
 class UserService {
   private connection: Connection;
 
