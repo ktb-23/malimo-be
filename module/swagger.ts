@@ -1,6 +1,6 @@
 const swaggerUi = require("swagger-ui-express");
 const swaggereJsdoc = require("swagger-jsdoc");
-const userSchemas = require("../components/auth");
+const userSchemas = require("../component/user");
 const options = {
   definition: {
     openapi: "3.0.0",
@@ -11,7 +11,7 @@ const options = {
     },
     servers: [
       {
-        url: "http://localhost:8000",
+        url: "http://localhost:8001",
       },
     ],
     components: {
@@ -27,7 +27,7 @@ const options = {
       },
     },
   },
-  apis: ["./router/*.js"],
+  apis: ["./router/*.ts"],
 };
 
 const specs = swaggereJsdoc(options);
