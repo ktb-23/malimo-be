@@ -158,10 +158,7 @@ class DiaryService {
         year,
       ]);
 
-      if (monthDatesResult.length === 0) {
-        throw new Error("해당 월에 일기가 없습니다.");
-      }
-      return monthDatesResult.map((row: RowDataPacket) => row.date);
+      return monthDatesResult.map((row: RowDataPacket) => row.date) || [];
     } catch (error) {
       console.error("일기 월별 날짜 조회 오류:", error);
       throw new Error("일기 월별 날짜 조회 실패 했습니다.");
