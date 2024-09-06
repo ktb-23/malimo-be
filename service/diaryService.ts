@@ -432,7 +432,7 @@ class DiaryService {
         emotion_analysis: null,
         summary: null,
         advice: null,
-        total_scores: Array(7).fill(null),
+        total_scores: null,
       };
     }
   }
