@@ -1,0 +1,44 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Repository Checkout
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    # 2. SSH 설정
+    - name: Add SSH Key
+      run: |
+        echo "${{ secrets.TONY_EC2_KEY_KTB_23 }}" | base64 -d > ~/ec2_key.pem
+        chmod 600 ~/ec2_key.pem
+
+    # 3. EC2에 접속해서 Dockerfile을 통해 배포
+    - name: Deploy to EC2
+      run: |
+        ssh -o StrictHostKeyChecking=no -i ~/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_IP }} << 'EOF'
+          # EC2 서버의 작업 디렉토리로 이동하거나 디렉토리 생성
+          cd /home/${{ secrets.EC2_USER }}/malimo-be || git clone -b dev https://github.com/ktb-23/malimo-be.git /home/${{ secrets.EC2_USER }}/malimo-be
+          
+          # Git에서 dev 브랜치의 최신 코드 가져오기
+          cd /home/${{ secrets.EC2_USER }}/malimo-be
+          git checkout dev
+          git pull origin dev
+          
+          # Docker 이미지 빌드
+          docker build -t malimo-be .
+
+          # 기존 컨테이너가 있으면 중지 및 삭제
+          docker stop malimo-be || true
+          docker rm malimo-be || true
+          
+          # Docker 컨테이너 실행 (8001 포트에서)
+          docker run -d -p 8001:8001 --name malimo-be malimo-be
+        EOF
