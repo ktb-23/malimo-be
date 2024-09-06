@@ -38,6 +38,9 @@ class UserService {
     if (!data.nickname || !data.email || !data.password) {
       throw new Error("모든 필드를 입력해야 합니다.");
     }
+
+    // 닉네임 중복 확인
+    await this.checkDuplicateNickname(data.nickname);
     // 해시된 비밀번호
     const hashedPassword = await bcrypt.hash(data.password, 8);
 
