@@ -176,4 +176,52 @@ router.delete("/:diary_id", verifyTokenMiddleware, (req, res) =>
 router.get("/advise/:date", verifyTokenMiddleware, (req, res) =>
   diaryController.getEmotionAdvise(req, res)
 );
+
+/**
+ * @swagger
+ * /api/v1/diary/monthly/{year}/{month}:
+ *   get:
+ *     summary: 월 일기 날짜 조회
+ *     description: 유저 월 일기 날짜 조회
+ *     tags:
+ *       - Diary
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: year
+ *         required: true
+ *         schema:
+ *           type: integer
+ *           example: 2024
+ *       - in: path
+ *         name: month
+ *         required: true
+ *         schema:
+ *           type: integer
+ *           example: 9
+ *     responses:
+ *       200:
+ *         description: 월 일기 조회
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 dates:
+ *                   type: array
+ *                   items:
+ *                     type: string
+ *                     format: date
+ *       403:
+ *         description: 토큰이 없음
+ *       404:
+ *         description: 유저가 없음
+ *       401:
+ *         description: 인증 권한이 없음
+ */
+
+router.get("/monthly/:year/:month", verifyTokenMiddleware, (req, res) =>
+  diaryController.getDiaryMonthDate(req, res)
+);
 export default router;

@@ -84,7 +84,38 @@ class diaryController {
       res.status(500).json({ error: "일기 삭제 중 에러" });
     }
   }
+  public async getDiaryMonthDate(
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> {
+    try {
+      const { year, month } = req.params;
 
+      if (!req.user) {
+        res.status(401).json({ message: "인증 권한 없음" });
+        return;
+      }
+
+      if (!year || !month || isNaN(parseInt(year)) || isNaN(parseInt(month))) {
+        res.status(400).json({ message: "유효하지 않은 요청입니다." });
+        return;
+      }
+
+      const yearInt = parseInt(year, 10);
+      const monthInt = parseInt(month, 10);
+      const userId = req.user.user_id;
+
+      const diaryDates = await this.diaryService.getDiaryMonthDate(
+        userId,
+        monthInt,
+        yearInt
+      );
+      res.status(200).json({ dates: diaryDates });
+    } catch (error) {
+      console.error("일기 월별 날짜 조회 오류:", error);
+      res.status(500).json({ message: "일기 월별 날짜 조회 실패했습니다." });
+    }
+  }
   public async getEmotionAdvise(
     req: AuthRequest,
     res: Response
