@@ -14,10 +14,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v2
 
-    # 2. SSH 설정
+    # 2. SSH 설정 
     - name: Add SSH Key
       run: |
-        echo "${{ secrets.TONY_EC2_KEY_KTB_23 }}" | base64 -d > ~/ec2_key.pem
+        echo "${{ secrets.TONY_EC2_KEY_KTB_23 }}" > ~/ec2_key.pem
         chmod 600 ~/ec2_key.pem
 
     # 3. EC2에 접속해서 Dockerfile을 통해 배포
