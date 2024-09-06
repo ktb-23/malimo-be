@@ -31,4 +31,24 @@ module.exports = {
     },
     required: ["email", "password"],
   },
+  UpdateNickname: {
+    type: "object",
+    properties: {
+      nickname: {
+        type: "string",
+        example: "23",
+      },
+    },
+    required: ["nickname"],
+  },
+  UpdatePassword: {
+    type: "object",
+    properties: {
+      password: {
+        type: "string",
+        example: "!ktb13",
+      },
+    },
+    required: ["password"],
+  },
 };

@@ -85,6 +85,69 @@ class UserService {
       refreshToken,
     };
   }
+  public async updateNickname(
+    user_id: number,
+    nickname: string
+  ): Promise<void> {
+    // 닉네임 길이 확인
+    if (nickname.length < 2 || nickname.length > 20) {
+      throw new Error("닉네임은 2자 이상 20자 이하여야 합니다.");
+    }
+
+    // 닉네임 중복 확인
+    await this.checkDuplicateNickname(nickname);
+
+    try {
+      const updateNicknameQuery = `
+        UPDATE user_tb
+        SET nickname = ?
+        WHERE user_id = ?
+      `;
+      await this.executeQuery(updateNicknameQuery, [nickname, user_id]);
+    } catch (error) {
+      console.error("닉네임 업데이트 중 오류:", error);
+      throw new Error("닉네임 업데이트에 실패 했습니다.");
+    }
+  }
+  public async updatePassword(user_id: number, password: string): Promise<any> {
+    try {
+      const hashedPassword = await bcrypt.hash(password, 8);
+      const updatePasswordQuery = `
+        UPDATE user_tb
+        SET password = ?
+        WHERE user_id = ?
+      `;
+      await this.executeQuery(updatePasswordQuery, [hashedPassword, user_id]);
+    } catch (error) {
+      console.error("비밀번호 업데이트 중 오류:", error);
+      throw new Error("비밀번호 업데이트에 실패 했습니다.");
+    }
+  }
+
+  public async deleteUser(user_id: number): Promise<{ message: string }> {
+    try {
+      // Delete from diary_tb
+      const deleteDiaryQuery = "DELETE FROM diary_tb WHERE user_id = ?";
+      await this.executeQuery(deleteDiaryQuery, [user_id]);
+      // Delete from emotion_stat_tb
+      const deleteEmotionStatQuery =
+        "DELETE FROM emotion_stat_tb WHERE user_id = ?";
+      await this.executeQuery(deleteEmotionStatQuery, [user_id]);
+
+      // Delete from date_tb
+      const deleteDateQuery = "DELETE FROM date_tb WHERE user_id = ?";
+      await this.executeQuery(deleteDateQuery, [user_id]);
+
+      // Finally, delete the user from user_tb
+      const deleteUserQuery = "DELETE FROM user_tb WHERE user_id = ?";
+      await this.executeQuery(deleteUserQuery, [user_id]);
+
+      return { message: "사용자가 성공적으로 삭제되었습니다." };
+    } catch (error) {
+      console.error("사용자 삭제 중 오류:", error);
+      throw new Error("사용자 삭제에 실패했습니다.");
+    }
+  }
 }
 
 export default UserService;

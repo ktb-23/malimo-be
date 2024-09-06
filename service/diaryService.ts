@@ -139,6 +139,7 @@ class DiaryService {
 
   public async getEmotionAdvise(date: string, user_id: number): Promise<any> {
     try {
+      // Step 1: Get the contents from the diary
       const getContentsQuery = `
         SELECT dt.date_id, dt.contents
         FROM diary_tb dt
@@ -156,23 +157,123 @@ class DiaryService {
       }
 
       const contents: string = (contentsResult[0] as RowDataPacket).contents;
+      const date_id: number = (contentsResult[0] as RowDataPacket).date_id;
 
-      const flaskApiUrl = "http://3.35.159.74:5001/review";
-      const response = await axios.post(
-        flaskApiUrl,
-        {
-          text: contents,
-          session_id: "default",
-        },
-        {
-          headers: {
-            "Content-Type": "application/json",
-          },
+      // Step 2: Check if assistant_id exists
+      const checkAssistantQuery =
+        "SELECT assistant_id FROM user_tb WHERE user_id = ?";
+      const assistantResult = await this.executeQuery(checkAssistantQuery, [
+        user_id,
+      ]);
+      const user = assistantResult[0] as RowDataPacket;
+
+      if (user.assistant_id) {
+        // Step 3: Fetch data from diary_tb and emotion_stat_tb
+        const getDiaryDataQuery = `
+          SELECT emotion_analysis, summary, advice
+          FROM diary_tb
+          WHERE user_id = ? AND date_id = ?
+        `;
+        const diaryDataResult = await this.executeQuery(getDiaryDataQuery, [
+          user_id,
+          date_id,
+        ]);
+
+        const getEmotionStatDataQuery = `
+          SELECT total_score
+          FROM emotion_stat_tb
+          WHERE user_id = ? AND date_id = ?
+        `;
+        const emotionStatDataResult = await this.executeQuery(
+          getEmotionStatDataQuery,
+          [user_id, date_id]
+        );
+
+        if (
+          diaryDataResult.length === 0 ||
+          emotionStatDataResult.length === 0
+        ) {
+          throw new Error("감정 분석 결과가 없습니다.");
         }
-      );
 
-      console.log(response.data);
-      return response.data;
+        return {
+          emotion_analysis: (diaryDataResult[0] as RowDataPacket)
+            .emotion_analysis,
+          summary: (diaryDataResult[0] as RowDataPacket).summary,
+          advice: (diaryDataResult[0] as RowDataPacket).advice,
+          total_score: (emotionStatDataResult[0] as RowDataPacket).total_score,
+        };
+      } else {
+        // Step 4: Request a new assistant_id and analyze
+        const flaskApiUrl = "http://3.35.159.74:5001/get_or_create_assistant";
+        const requestBody = { user_id };
+        const response = await axios.post(flaskApiUrl, requestBody, {
+          headers: { "Content-Type": "application/json" },
+        });
+
+        const newAssistantId = response.data.assistant_id;
+
+        // Update user_tb with new assistant_id
+        const updateAssistantIdQuery = `
+          UPDATE user_tb
+          SET assistant_id = ?
+          WHERE user_id = ?
+        `;
+        await this.executeQuery(updateAssistantIdQuery, [
+          newAssistantId,
+          user_id,
+        ]);
+
+        // Request analyze with new assistant_id
+        const analyzeApiUrl = "http://3.35.159.74:5001/analyze";
+        const analyzeRequestBody = {
+          user_id,
+          message: contents,
+          assistant_id: newAssistantId,
+        };
+        const analyzeResponse = await axios.post(
+          analyzeApiUrl,
+          analyzeRequestBody,
+          {
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+
+        const { emotion_analysis, total_score, summary, advice } =
+          analyzeResponse.data;
+
+        // Update diary_tb and emotion_stat_tb with new data
+        const updateDiaryQuery = `
+          UPDATE diary_tb
+          SET emotion_analysis = ?, summary = ?, advice = ?
+          WHERE user_id = ? AND date_id = ?
+        `;
+        await this.executeQuery(updateDiaryQuery, [
+          emotion_analysis,
+          summary,
+          advice,
+          user_id,
+          date_id,
+        ]);
+
+        const updateEmotionStatQuery = `
+  UPDATE emotion_stat_tb
+  SET total_score = ?
+  WHERE user_id = ? AND date_id = ?
+`;
+        await this.executeQuery(updateEmotionStatQuery, [
+          total_score,
+          user_id,
+          date_id,
+        ]);
+
+        return {
+          emotion_analysis,
+          summary,
+          advice,
+          total_score,
+        };
+      }
     } catch (error) {
       console.error("감정 및 조언 조회 오류:", error);
       throw new Error("감정 및 조언 조회 실패 했습니다.");
