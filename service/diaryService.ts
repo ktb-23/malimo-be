@@ -165,162 +165,193 @@ class DiaryService {
       throw new Error("일기 월별 날짜 조회 실패 했습니다.");
     }
   }
-  public async getEmotionAdvise(date: string, user_id: number): Promise<any> {
-    try {
-      // Step 1: Fetch diary contents
-      const getContentsQuery = `
-            SELECT dt.date_id, dt.contents
-            FROM diary_tb dt
-            JOIN date_tb d ON dt.date_id = d.date_id
-            WHERE d.date = ? AND d.user_id = ?
-        `;
-      const contentsResult = await this.executeQuery(getContentsQuery, [
-        date,
-        user_id,
-      ]);
+  private async fetchDiaryContents(
+    date: string,
+    user_id: number
+  ): Promise<{ contents: string; date_id: number }> {
+    const getContentsQuery = `
+      SELECT dt.date_id, dt.contents
+      FROM diary_tb dt
+      JOIN date_tb d ON dt.date_id = d.date_id
+      WHERE d.date = ? AND d.user_id = ?
+    `;
+    const contentsResult = await this.executeQuery(getContentsQuery, [
+      date,
+      user_id,
+    ]);
 
-      if (contentsResult.length === 0) {
-        throw new Error("날짜 또는 일기가 없습니다.");
-      }
+    if (contentsResult.length === 0) {
+      throw new Error("날짜 또는 일기가 없습니다.");
+    }
 
-      const contents: string = (contentsResult[0] as RowDataPacket).contents;
-      const date_id: number = (contentsResult[0] as RowDataPacket).date_id;
+    const contents = (contentsResult[0] as RowDataPacket).contents;
+    const date_id = (contentsResult[0] as RowDataPacket).date_id;
 
-      // Step 2: Check if assistant_id and thread_id exist
-      const checkAssistantQuery =
-        "SELECT assistant_id, thread_id FROM user_tb WHERE user_id = ?";
-      const assistantResult = await this.executeQuery(checkAssistantQuery, [
-        user_id,
-      ]);
-      const user = assistantResult[0] as RowDataPacket;
+    return { contents, date_id };
+  }
 
-      let assistant_id = user.assistant_id;
-      let thread_id = user.thread_id;
+  private async checkOrCreateAssistant(
+    user_id: number
+  ): Promise<{ assistant_id: string; thread_id: string }> {
+    const checkAssistantQuery =
+      "SELECT assistant_id, thread_id FROM user_tb WHERE user_id = ?";
+    const assistantResult = await this.executeQuery(checkAssistantQuery, [
+      user_id,
+    ]);
+    const user = assistantResult[0] as RowDataPacket;
 
-      if (!assistant_id || !thread_id) {
-        // Request a new assistant_id and thread_id from Flask API
-        const flaskApiUrl = "http://3.35.159.74:5001/get_or_create_assistant";
-        const response = await axios.post(
-          flaskApiUrl,
-          { user_id },
-          { headers: { "Content-Type": "application/json" } }
-        );
+    let { assistant_id, thread_id } = user;
 
-        assistant_id = response.data.assistant_id;
-        thread_id = response.data.thread_id;
-
-        // Update user_tb with new assistant_id and thread_id
-        const updateAssistantIdQuery = `
-                UPDATE user_tb
-                SET assistant_id = ?, thread_id = ?
-                WHERE user_id = ?
-            `;
-        await this.executeQuery(updateAssistantIdQuery, [
-          assistant_id,
-          thread_id,
-          user_id,
-        ]);
-      }
-
-      // Step 3: Analyze the contents
-      const analyzeApiUrl = "http://3.35.159.74:5001/analyze";
-      const analyzeRequestBody = { assistant_id, thread_id, message: contents };
-      const analyzeResponse = await axios.post(
-        analyzeApiUrl,
-        analyzeRequestBody,
+    if (!assistant_id || !thread_id) {
+      const flaskApiUrl = "http://3.35.159.74:5001/get_or_create_assistant";
+      const response = await axios.post(
+        flaskApiUrl,
+        { user_id },
         { headers: { "Content-Type": "application/json" } }
       );
+      assistant_id = response.data.assistant_id;
+      thread_id = response.data.thread_id;
 
+      const updateAssistantIdQuery = `
+        UPDATE user_tb
+        SET assistant_id = ?, thread_id = ?
+        WHERE user_id = ?
+      `;
+      await this.executeQuery(updateAssistantIdQuery, [
+        assistant_id,
+        thread_id,
+        user_id,
+      ]);
+    }
+
+    return { assistant_id, thread_id };
+  }
+
+  private async analyzeContents(
+    assistant_id: string,
+    thread_id: string,
+    contents: string
+  ): Promise<any> {
+    const analyzeApiUrl = "http://3.35.159.74:5001/analyze";
+    const analyzeRequestBody = { assistant_id, thread_id, message: contents };
+    const analyzeResponse = await axios.post(
+      analyzeApiUrl,
+      analyzeRequestBody,
+      { headers: { "Content-Type": "application/json" } }
+    );
+
+    return analyzeResponse.data;
+  }
+
+  private async updateDiaryAdvice(
+    user_id: number,
+    date_id: number,
+    emotion_analysis: string,
+    summary: string,
+    advice: string
+  ): Promise<void> {
+    const updateDiaryQuery = `
+      UPDATE diary_tb
+      SET emotion_analysis = ?, summary = ?, advice = ?
+      WHERE user_id = ? AND date_id = ?
+    `;
+    await this.executeQuery(updateDiaryQuery, [
+      emotion_analysis,
+      summary,
+      advice,
+      user_id,
+      date_id,
+    ]);
+  }
+
+  private async updateEmotionStats(
+    user_id: number,
+    date_id: number,
+    total_score: number
+  ): Promise<void> {
+    const updateEmotionStatQuery = `
+      INSERT INTO emotion_stat_tb (user_id, date_id, total_score)
+      VALUES (?, ?, ?)
+      ON DUPLICATE KEY UPDATE total_score = VALUES(total_score);
+    `;
+    await this.executeQuery(updateEmotionStatQuery, [
+      user_id,
+      date_id,
+      total_score,
+    ]);
+  }
+
+  private async fetchWeekScores(
+    user_id: number,
+    startDate: string,
+    endDate: string
+  ): Promise<number[]> {
+    const getWeekEmotionScoresQuery = `
+      SELECT d.date, es.total_score
+      FROM emotion_stat_tb es
+      JOIN date_tb d ON es.date_id = d.date_id
+      WHERE es.user_id = ? AND d.date BETWEEN ? AND ?
+    `;
+    const weekEmotionScoresResult = await this.executeQuery(
+      getWeekEmotionScoresQuery,
+      [user_id, startDate, endDate]
+    );
+
+    const totalScoresByWeekday = Array(7).fill(null);
+    weekEmotionScoresResult.forEach((row: any) => {
+      const day = new Date(row.date).getDay();
+      totalScoresByWeekday[day] = row.total_score;
+    });
+
+    return totalScoresByWeekday;
+  }
+  private formatDate(date: Date): string {
+    const year = date.getFullYear();
+    const month = ("0" + (date.getMonth() + 1)).slice(-2);
+    const day = ("0" + date.getDate()).slice(-2);
+    return `${year}.${month}.${day}`;
+  }
+
+  public async getEmotionAdvise(date: string, user_id: number): Promise<any> {
+    try {
+      const { contents, date_id } = await this.fetchDiaryContents(
+        date,
+        user_id
+      );
+      const { assistant_id, thread_id } = await this.checkOrCreateAssistant(
+        user_id
+      );
       const { emotion_analysis, total_score, summary, advice } =
-        analyzeResponse.data;
+        await this.analyzeContents(assistant_id, thread_id, contents);
 
-      // Step 4: Update diary_tb and emotion_stat_tb
-      const updateDiaryQuery = `
-            UPDATE diary_tb
-            SET emotion_analysis = ?, summary = ?, advice = ?
-            WHERE user_id = ? AND date_id = ?
-        `;
-      await this.executeQuery(updateDiaryQuery, [
+      await this.updateDiaryAdvice(
+        user_id,
+        date_id,
         emotion_analysis,
         summary,
-        advice,
-        user_id,
-        date_id,
-      ]);
+        advice
+      );
+      await this.updateEmotionStats(user_id, date_id, total_score);
 
-      const updateEmotionStatQuery = `
-            INSERT INTO emotion_stat_tb (user_id, date_id, total_score)
-            VALUES (?, ?, ?)
-            ON DUPLICATE KEY UPDATE total_score = VALUES(total_score);
-        `;
-      await this.executeQuery(updateEmotionStatQuery, [
-        user_id,
-        date_id,
-        total_score,
-      ]);
-
-      // Step 5: Calculate the start and end dates for the current week
       const startDate = new Date(date);
-      startDate.setDate(startDate.getDate() - startDate.getDay()); // Sunday of the current week
+      startDate.setDate(startDate.getDate() - startDate.getDay());
 
       const endDate = new Date(date);
-      endDate.setDate(endDate.getDate() + (6 - endDate.getDay())); // Saturday of the current week
+      endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
 
-      // Format dates as 'YYYY.MM.DD'
-      const formatDate = (date: Date) => {
-        const year = date.getFullYear();
-        const month = ("0" + (date.getMonth() + 1)).slice(-2);
-        const day = ("0" + date.getDate()).slice(-2);
-        return `${year}.${month}.${day}`;
-      };
+      const formattedStartDate = this.formatDate(startDate);
+      const formattedEndDate = this.formatDate(endDate);
 
-      const formattedStartDate = formatDate(startDate);
-      const formattedEndDate = formatDate(endDate);
-
-      console.log("Start Date:", formattedStartDate);
-      console.log("End Date:", formattedEndDate);
-
-      // Step 6: Fetch the data for the entire week
-      const getWeekEmotionScoresQuery = `
-            SELECT d.date, es.total_score
-            FROM emotion_stat_tb es
-            JOIN date_tb d ON es.date_id = d.date_id
-            WHERE es.user_id = ? AND d.date BETWEEN ? AND ?
-        `;
-      const weekEmotionScoresResult = await this.executeQuery(
-        getWeekEmotionScoresQuery,
-        [user_id, formattedStartDate, formattedEndDate]
-      );
-
-      console.log("Week Emotion Scores Result:", weekEmotionScoresResult);
-
-      const totalScoresByWeekday = weekEmotionScoresResult.reduce(
-        (acc: any, row: any) => {
-          const day = new Date(row.date).getDay(); // 0: Sunday, 1: Monday, ..., 6: Saturday
-          acc[day] = row.total_score;
-          return acc;
-        },
-        Array(7).fill(null) // Initialize an array with 7 elements (one for each day of the week)
-      );
-
-      console.log("Total Scores By Weekday:", totalScoresByWeekday);
-
-      // Step 7: Fetch the data to return to client
-      const getDiaryAndScoreDataQuery = `
-            SELECT dt.emotion_analysis, dt.summary, dt.advice
-            FROM diary_tb dt
-            WHERE dt.user_id = ? AND dt.date_id = ?
-        `;
-      const diaryAndScoreDataResult = await this.executeQuery(
-        getDiaryAndScoreDataQuery,
-        [user_id, date_id]
+      const totalScoresByWeekday = await this.fetchWeekScores(
+        user_id,
+        formattedStartDate,
+        formattedEndDate
       );
 
       return {
-        emotion_analysis: (diaryAndScoreDataResult[0] as RowDataPacket)
-          .emotion_analysis,
-        summary: (diaryAndScoreDataResult[0] as RowDataPacket).summary,
-        advice: (diaryAndScoreDataResult[0] as RowDataPacket).advice,
+        emotion_analysis,
+        summary,
+        advice,
         total_scores: totalScoresByWeekday,
       };
     } catch (error) {
