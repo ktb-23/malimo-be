@@ -64,7 +64,7 @@ class DiaryService {
       } else {
         // 존재하지 않을 경우, 새로 삽입
         const insertDiaryQuery = `
-        INSERT INTO diary_tb (user_id, date_id, contents) 
+        INSERT INTO diary_tb (user_id, date_id, contents)
         VALUES (?, ?, ?)
       `;
         await this.executeQuery(insertDiaryQuery, [user_id, date_id, contents]);
@@ -89,12 +89,13 @@ class DiaryService {
         user_id,
       ]);
 
-      if (contentsResult.length === 0) {
-        throw new Error("날짜 또는 일기가 없습니다.");
-      }
+      let contents: string = "";
+      let diary_id: number | null = null;
 
-      const contents: string = (contentsResult[0] as RowDataPacket).contents;
-      const diary_id: number = (contentsResult[0] as RowDataPacket).diary_id;
+      if (contentsResult.length !== 0) {
+        contents = (contentsResult[0] as RowDataPacket).contents;
+        diary_id = (contentsResult[0] as RowDataPacket).diary_id;
+      }
       return { diary_id, contents };
     } catch (error: any) {
       console.error("일기 조회 오류:", error);
@@ -108,8 +109,8 @@ class DiaryService {
     contents: any
   ): Promise<any> {
     try {
-      const updateContentsQuery = ` UPDATE diary_tb 
-        SET contents = ? 
+      const updateContentsQuery = ` UPDATE diary_tb
+        SET contents = ?
         WHERE diary_id = ? AND user_id = ?`;
       await this.executeQuery(updateContentsQuery, [
         contents,
