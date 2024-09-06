@@ -13,4 +13,14 @@ module.exports = {
     },
     required: ["date", "contents"],
   },
+  UpdateDiary: {
+    type: "object",
+    properties: {
+      contents: {
+        type: "string",
+        example: "나는야 퉁퉁이 골목 대장 퉁퉁이 ",
+      },
+    },
+    required: ["contents"],
+  },
 };
