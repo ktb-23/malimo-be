@@ -1,6 +1,13 @@
 import { Connection, RowDataPacket } from "mysql2/promise";
 import { SaveDiaryType } from "../types/type";
 import axios from "axios";
+// Define the shape of the analysis results
+interface AnalysisResults {
+  emotion_analysis: string | null;
+  summary: string | null;
+  advice: string | null;
+  total_score: number | null;
+}
 // 일기 서비스
 class DiaryService {
   private connection: Connection;
@@ -165,15 +172,17 @@ class DiaryService {
       throw new Error("일기 월별 날짜 조회 실패 했습니다.");
     }
   }
+
   private async fetchDiaryContents(
     date: string,
     user_id: number
-  ): Promise<any> {
+  ): Promise<any | null> {
     const getContentsQuery = `
-      SELECT dt.date_id, dt.contents, dt.summary, dt.emotion_analysis
+      SELECT dt.date_id, dt.contents, dt.summary, dt.emotion_analysis, dt.advice, es.total_score, d.date
       FROM diary_tb dt
       JOIN date_tb d ON dt.date_id = d.date_id
-      WHERE d.date = ? AND d.user_id = ?
+      LEFT JOIN emotion_stat_tb es ON dt.date_id = es.date_id AND dt.user_id = es.user_id
+      WHERE DATE(d.date) = DATE(?) AND dt.user_id = ?
     `;
     const contentsResult = await this.executeQuery(getContentsQuery, [
       date,
@@ -181,15 +190,18 @@ class DiaryService {
     ]);
 
     if (contentsResult.length === 0) {
-      return null; // Return null if no data is found
+      return null;
     }
 
     const result = contentsResult[0] as RowDataPacket;
     return {
+      date: this.formatDate(new Date(result.date)),
       contents: result.contents,
       date_id: result.date_id,
       summary: result.summary || null,
       emotion_analysis: result.emotion_analysis || null,
+      advice: result.advice || null,
+      total_score: result.total_score || null,
     };
   }
 
@@ -216,10 +228,10 @@ class DiaryService {
       thread_id = response.data.thread_id;
 
       const updateAssistantIdQuery = `
-        UPDATE user_tb
-        SET assistant_id = ?, thread_id = ?
-        WHERE user_id = ?
-      `;
+      UPDATE user_tb
+      SET assistant_id = ?, thread_id = ?
+      WHERE user_id = ?
+    `;
       await this.executeQuery(updateAssistantIdQuery, [
         assistant_id,
         thread_id,
@@ -254,10 +266,10 @@ class DiaryService {
     advice: string
   ): Promise<void> {
     const updateDiaryQuery = `
-      UPDATE diary_tb
-      SET emotion_analysis = ?, summary = ?, advice = ?
-      WHERE user_id = ? AND date_id = ?
-    `;
+    UPDATE diary_tb
+    SET emotion_analysis = ?, summary = ?, advice = ?
+    WHERE user_id = ? AND date_id = ?
+  `;
     await this.executeQuery(updateDiaryQuery, [
       emotion_analysis,
       summary,
@@ -273,10 +285,10 @@ class DiaryService {
     total_score: number
   ): Promise<void> {
     const updateEmotionStatQuery = `
-      INSERT INTO emotion_stat_tb (user_id, date_id, total_score)
-      VALUES (?, ?, ?)
-      ON DUPLICATE KEY UPDATE total_score = VALUES(total_score);
-    `;
+    INSERT INTO emotion_stat_tb (user_id, date_id, total_score)
+    VALUES (?, ?, ?)
+    ON DUPLICATE KEY UPDATE total_score = VALUES(total_score);
+  `;
     await this.executeQuery(updateEmotionStatQuery, [
       user_id,
       date_id,
@@ -290,11 +302,11 @@ class DiaryService {
     endDate: string
   ): Promise<number[]> {
     const getWeekEmotionScoresQuery = `
-      SELECT d.date, es.total_score
-      FROM emotion_stat_tb es
-      JOIN date_tb d ON es.date_id = d.date_id
-      WHERE es.user_id = ? AND d.date BETWEEN ? AND ?
-    `;
+    SELECT d.date, es.total_score
+    FROM emotion_stat_tb es
+    JOIN date_tb d ON es.date_id = d.date_id
+    WHERE es.user_id = ? AND d.date BETWEEN ? AND ?
+  `;
     const weekEmotionScoresResult = await this.executeQuery(
       getWeekEmotionScoresQuery,
       [user_id, startDate, endDate]
@@ -308,6 +320,39 @@ class DiaryService {
 
     return totalScoresByWeekday;
   }
+  private async fetchMostRecentDiaryContents(
+    user_id: number,
+    beforeDate: string
+  ): Promise<any | null> {
+    const getMostRecentQuery = `
+      SELECT dt.date_id, dt.contents, dt.summary, dt.emotion_analysis, dt.advice, es.total_score, d.date
+      FROM diary_tb dt
+      JOIN date_tb d ON dt.date_id = d.date_id
+      LEFT JOIN emotion_stat_tb es ON dt.date_id = es.date_id AND dt.user_id = es.user_id
+      WHERE dt.user_id = ? AND DATE(d.date) < DATE(?)
+      ORDER BY d.date DESC
+      LIMIT 1
+    `;
+    const recentResult = await this.executeQuery(getMostRecentQuery, [
+      user_id,
+      beforeDate,
+    ]);
+
+    if (recentResult.length === 0) {
+      return null;
+    }
+
+    const result = recentResult[0] as RowDataPacket;
+    return {
+      date: this.formatDate(new Date(result.date)),
+      contents: result.contents,
+      date_id: result.date_id,
+      summary: result.summary || null,
+      emotion_analysis: result.emotion_analysis || null,
+      advice: result.advice || null,
+      total_score: result.total_score || null,
+    };
+  }
   private formatDate(date: Date): string {
     const year = date.getFullYear();
     const month = ("0" + (date.getMonth() + 1)).slice(-2);
@@ -318,94 +363,70 @@ class DiaryService {
   public async getEmotionAdvise(date: string, user_id: number): Promise<any> {
     try {
       // Fetch the current day's diary contents
-      const { contents, date_id } = await this.fetchDiaryContents(
-        date,
-        user_id
-      );
-      if (!contents || !date_id) {
-        throw new Error("날짜 또는 일기가 없습니다.");
+      let diaryData = await this.fetchDiaryContents(date, user_id);
+
+      // If no data for the given date, fetch the most recent data before the given date
+      if (!diaryData) {
+        diaryData = await this.fetchMostRecentDiaryContents(user_id, date);
       }
 
-      // Check or create assistant and thread IDs
+      // If still no data, return empty values
+      if (!diaryData) {
+        return {
+          date: null,
+          emotion_analysis: null,
+          summary: null,
+          advice: null,
+          total_score: null,
+          total_scores: Array(7).fill(null),
+        };
+      }
+
+      // Fetch or create assistant and thread IDs
       const { assistant_id, thread_id } = await this.checkOrCreateAssistant(
         user_id
       );
 
-      // Prepare to analyze the previous day's diary entry
-      const previousDay = new Date(date);
-      previousDay.setDate(previousDay.getDate() - 1);
-      const formattedPreviousDay = this.formatDate(previousDay);
-
-      let previousSummary: string | null = null;
-      let previousEmotionAnalysis: string | null = null;
-
-      // Fetch and analyze the previous day's diary contents
-      try {
-        const prevDiaryData = await this.fetchDiaryContents(
-          formattedPreviousDay,
-          user_id
+      // Analyze the contents if needed
+      if (!diaryData.emotion_analysis || !diaryData.advice) {
+        const analysisResults = await this.analyzeContents(
+          assistant_id,
+          thread_id,
+          diaryData.contents
         );
-        if (prevDiaryData) {
-          previousSummary = prevDiaryData.summary;
-          previousEmotionAnalysis = prevDiaryData.emotion_analysis;
 
-          // Analyze previous day's diary contents if available
-          if (prevDiaryData.contents) {
-            const prevAnalysisResults = await this.analyzeContents(
-              assistant_id,
-              thread_id,
-              prevDiaryData.contents
-            );
+        // Update diary with analysis results
+        await this.updateDiaryAdvice(
+          user_id,
+          diaryData.date_id,
+          analysisResults.emotion_analysis,
+          analysisResults.summary,
+          analysisResults.advice
+        );
 
-            // Update the previous day's diary with analysis results
-            await this.updateDiaryAdvice(
-              user_id,
-              prevDiaryData.date_id,
-              prevAnalysisResults.emotion_analysis,
-              prevAnalysisResults.summary,
-              prevAnalysisResults.advice
-            );
-            await this.updateEmotionStats(
-              user_id,
-              prevDiaryData.date_id,
-              prevAnalysisResults.total_score
-            );
+        // Update emotion stats
+        await this.updateEmotionStats(
+          user_id,
+          diaryData.date_id,
+          analysisResults.total_score
+        );
 
-            // Re-fetch the updated previous day's diary entry
-            const updatedPrevDiaryData = await this.fetchDiaryContents(
-              formattedPreviousDay,
-              user_id
-            );
-            previousSummary = updatedPrevDiaryData.summary;
-            previousEmotionAnalysis = updatedPrevDiaryData.emotion_analysis;
-          }
-        }
-      } catch (err) {
-        // Handle errors and set as null if not found
-        previousSummary = null;
-        previousEmotionAnalysis = null;
+        // Refresh diary data after updating
+        diaryData = {
+          ...diaryData,
+          emotion_analysis: analysisResults.emotion_analysis,
+          summary: analysisResults.summary,
+          advice: analysisResults.advice,
+          total_score: analysisResults.total_score,
+        };
       }
 
-      // Analyze the current day's diary contents
-      const { emotion_analysis, total_score, summary, advice } =
-        await this.analyzeContents(assistant_id, thread_id, contents);
-
-      // Update the current day's diary and emotion stats
-      await this.updateDiaryAdvice(
-        user_id,
-        date_id,
-        emotion_analysis,
-        summary,
-        advice
-      );
-      await this.updateEmotionStats(user_id, date_id, total_score);
-
-      // Calculate the start and end dates of the current week
-      const startDate = new Date(date);
-      startDate.setDate(startDate.getDate() - startDate.getDay());
-
-      const endDate = new Date(date);
-      endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
+      // Calculate the start and end dates of the week containing the diary date
+      const diaryDate = new Date(diaryData.date);
+      const startDate = new Date(diaryDate);
+      startDate.setDate(diaryDate.getDate() - diaryDate.getDay());
+      const endDate = new Date(diaryDate);
+      endDate.setDate(diaryDate.getDate() + (6 - diaryDate.getDay()));
 
       const formattedStartDate = this.formatDate(startDate);
       const formattedEndDate = this.formatDate(endDate);
@@ -417,21 +438,26 @@ class DiaryService {
         formattedEndDate
       );
 
+      // Return the results
       return {
-        emotion_analysis: previousEmotionAnalysis || null,
-        summary: previousSummary || null,
-        advice: advice || null,
+        date: diaryData.date,
+        emotion_analysis: diaryData.emotion_analysis || null,
+        summary: diaryData.summary || null,
+        advice: diaryData.advice || null,
+        total_score: diaryData.total_score || null,
         total_scores:
           totalScoresByWeekday.length > 0
             ? totalScoresByWeekday
             : Array(7).fill(null),
       };
     } catch (error) {
-      console.error("감정 및 조언 조회 오류:", error);
+      console.error("Error retrieving emotion and advice:", error);
       return {
+        date: null,
         emotion_analysis: null,
         summary: null,
         advice: null,
+        total_score: null,
         total_scores: null,
       };
     }
