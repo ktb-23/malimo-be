@@ -168,9 +168,9 @@ class DiaryService {
   private async fetchDiaryContents(
     date: string,
     user_id: number
-  ): Promise<{ contents: string; date_id: number }> {
+  ): Promise<any> {
     const getContentsQuery = `
-      SELECT dt.date_id, dt.contents
+      SELECT dt.date_id, dt.contents, dt.summary, dt.emotion_analysis
       FROM diary_tb dt
       JOIN date_tb d ON dt.date_id = d.date_id
       WHERE d.date = ? AND d.user_id = ?
@@ -181,13 +181,16 @@ class DiaryService {
     ]);
 
     if (contentsResult.length === 0) {
-      throw new Error("날짜 또는 일기가 없습니다.");
+      return null; // Return null if no data is found
     }
 
-    const contents = (contentsResult[0] as RowDataPacket).contents;
-    const date_id = (contentsResult[0] as RowDataPacket).date_id;
-
-    return { contents, date_id };
+    const result = contentsResult[0] as RowDataPacket;
+    return {
+      contents: result.contents,
+      date_id: result.date_id,
+      summary: result.summary || null,
+      emotion_analysis: result.emotion_analysis || null,
+    };
   }
 
   private async checkOrCreateAssistant(
@@ -314,16 +317,80 @@ class DiaryService {
 
   public async getEmotionAdvise(date: string, user_id: number): Promise<any> {
     try {
+      // Fetch the current day's diary contents
       const { contents, date_id } = await this.fetchDiaryContents(
         date,
         user_id
       );
+      if (!contents || !date_id) {
+        throw new Error("날짜 또는 일기가 없습니다.");
+      }
+
+      // Check or create assistant and thread IDs
       const { assistant_id, thread_id } = await this.checkOrCreateAssistant(
         user_id
       );
+
+      // Prepare to analyze the previous day's diary entry
+      const previousDay = new Date(date);
+      previousDay.setDate(previousDay.getDate() - 1);
+      const formattedPreviousDay = this.formatDate(previousDay);
+
+      let previousSummary: string | null = null;
+      let previousEmotionAnalysis: string | null = null;
+
+      // Fetch and analyze the previous day's diary contents
+      try {
+        const prevDiaryData = await this.fetchDiaryContents(
+          formattedPreviousDay,
+          user_id
+        );
+        if (prevDiaryData) {
+          previousSummary = prevDiaryData.summary;
+          previousEmotionAnalysis = prevDiaryData.emotion_analysis;
+
+          // Analyze previous day's diary contents if available
+          if (prevDiaryData.contents) {
+            const prevAnalysisResults = await this.analyzeContents(
+              assistant_id,
+              thread_id,
+              prevDiaryData.contents
+            );
+
+            // Update the previous day's diary with analysis results
+            await this.updateDiaryAdvice(
+              user_id,
+              prevDiaryData.date_id,
+              prevAnalysisResults.emotion_analysis,
+              prevAnalysisResults.summary,
+              prevAnalysisResults.advice
+            );
+            await this.updateEmotionStats(
+              user_id,
+              prevDiaryData.date_id,
+              prevAnalysisResults.total_score
+            );
+
+            // Re-fetch the updated previous day's diary entry
+            const updatedPrevDiaryData = await this.fetchDiaryContents(
+              formattedPreviousDay,
+              user_id
+            );
+            previousSummary = updatedPrevDiaryData.summary;
+            previousEmotionAnalysis = updatedPrevDiaryData.emotion_analysis;
+          }
+        }
+      } catch (err) {
+        // Handle errors and set as null if not found
+        previousSummary = null;
+        previousEmotionAnalysis = null;
+      }
+
+      // Analyze the current day's diary contents
       const { emotion_analysis, total_score, summary, advice } =
         await this.analyzeContents(assistant_id, thread_id, contents);
 
+      // Update the current day's diary and emotion stats
       await this.updateDiaryAdvice(
         user_id,
         date_id,
@@ -333,6 +400,7 @@ class DiaryService {
       );
       await this.updateEmotionStats(user_id, date_id, total_score);
 
+      // Calculate the start and end dates of the current week
       const startDate = new Date(date);
       startDate.setDate(startDate.getDate() - startDate.getDay());
 
@@ -342,6 +410,7 @@ class DiaryService {
       const formattedStartDate = this.formatDate(startDate);
       const formattedEndDate = this.formatDate(endDate);
 
+      // Fetch the total scores for the entire week
       const totalScoresByWeekday = await this.fetchWeekScores(
         user_id,
         formattedStartDate,
@@ -349,14 +418,22 @@ class DiaryService {
       );
 
       return {
-        emotion_analysis,
-        summary,
-        advice,
-        total_scores: totalScoresByWeekday,
+        emotion_analysis: previousEmotionAnalysis || null,
+        summary: previousSummary || null,
+        advice: advice || null,
+        total_scores:
+          totalScoresByWeekday.length > 0
+            ? totalScoresByWeekday
+            : Array(7).fill(null),
       };
     } catch (error) {
       console.error("감정 및 조언 조회 오류:", error);
-      throw new Error("감정 및 조언 조회 실패 했습니다.");
+      return {
+        emotion_analysis: null,
+        summary: null,
+        advice: null,
+        total_scores: null,
+      };
     }
   }
 }
