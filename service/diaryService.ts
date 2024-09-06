@@ -259,11 +259,56 @@ class DiaryService {
         total_score,
       ]);
 
-      // Step 5: Fetch the data to return to client
+      // Step 5: Calculate the start and end dates for the current week
+      const startDate = new Date(date);
+      startDate.setDate(startDate.getDate() - startDate.getDay()); // Sunday of the current week
+
+      const endDate = new Date(date);
+      endDate.setDate(endDate.getDate() + (6 - endDate.getDay())); // Saturday of the current week
+
+      // Format dates as 'YYYY.MM.DD'
+      const formatDate = (date: Date) => {
+        const year = date.getFullYear();
+        const month = ("0" + (date.getMonth() + 1)).slice(-2);
+        const day = ("0" + date.getDate()).slice(-2);
+        return `${year}.${month}.${day}`;
+      };
+
+      const formattedStartDate = formatDate(startDate);
+      const formattedEndDate = formatDate(endDate);
+
+      console.log("Start Date:", formattedStartDate);
+      console.log("End Date:", formattedEndDate);
+
+      // Step 6: Fetch the data for the entire week
+      const getWeekEmotionScoresQuery = `
+            SELECT d.date, es.total_score
+            FROM emotion_stat_tb es
+            JOIN date_tb d ON es.date_id = d.date_id
+            WHERE es.user_id = ? AND d.date BETWEEN ? AND ?
+        `;
+      const weekEmotionScoresResult = await this.executeQuery(
+        getWeekEmotionScoresQuery,
+        [user_id, formattedStartDate, formattedEndDate]
+      );
+
+      console.log("Week Emotion Scores Result:", weekEmotionScoresResult);
+
+      const totalScoresByWeekday = weekEmotionScoresResult.reduce(
+        (acc: any, row: any) => {
+          const day = new Date(row.date).getDay(); // 0: Sunday, 1: Monday, ..., 6: Saturday
+          acc[day] = row.total_score;
+          return acc;
+        },
+        Array(7).fill(null) // Initialize an array with 7 elements (one for each day of the week)
+      );
+
+      console.log("Total Scores By Weekday:", totalScoresByWeekday);
+
+      // Step 7: Fetch the data to return to client
       const getDiaryAndScoreDataQuery = `
-            SELECT dt.emotion_analysis, dt.summary, dt.advice, es.total_score
+            SELECT dt.emotion_analysis, dt.summary, dt.advice
             FROM diary_tb dt
-            JOIN emotion_stat_tb es ON dt.date_id = es.date_id
             WHERE dt.user_id = ? AND dt.date_id = ?
         `;
       const diaryAndScoreDataResult = await this.executeQuery(
@@ -276,7 +321,7 @@ class DiaryService {
           .emotion_analysis,
         summary: (diaryAndScoreDataResult[0] as RowDataPacket).summary,
         advice: (diaryAndScoreDataResult[0] as RowDataPacket).advice,
-        total_score: (diaryAndScoreDataResult[0] as RowDataPacket).total_score,
+        total_scores: totalScoresByWeekday,
       };
     } catch (error) {
       console.error("감정 및 조언 조회 오류:", error);
