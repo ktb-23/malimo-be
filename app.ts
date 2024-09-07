@@ -5,13 +5,7 @@ import diaryRouter from "./router/diaryRouter";
 const app = express();
 const { swaggerUi, specs } = require("./module/swagger");
 app.use(express.json()); // JSON 바디 파서 추가
-app.use(
-  cors({
-    origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+app.use(cors());
 app.set("port", process.env.PORT || 8001);
 
 app.get("/", (req, res) => {
